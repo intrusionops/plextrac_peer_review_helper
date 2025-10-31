@@ -98,71 +98,85 @@ sequenceDiagram
   participant User as User
   participant CLI as peer_review_helper (CLI/TUI)
   participant API as PlexTracAPI
-  participant CE as CopyEditor
+  participant CE as CopyEditor (LLM)
   participant PT as PlexTrac REST
 
   rect rgba(37,99,235,0.15)
-    User->>CLI: Launch with server/client/report
-    CLI->>API: authenticate()
+    User->>CLI: Launch with server client report
+    CLI->>API: authenticate
     API->>PT: POST /auth
     PT-->>API: token
-    API-->>CLI: OK (start/refresh token thread)
+    API-->>CLI: OK start refresh token thread
   end
 
   rect rgba(34,197,94,0.18)
-    CLI->>API: get_full_report_content()
-    API->>PT: GET report + findings
+    CLI->>API: get_full_report_content
+    API->>PT: GET report and findings
     PT-->>API: payload
     API-->>CLI: data loaded
   end
 
   rect rgba(245,158,11,0.22)
-    User->>CLI: Press r (run suggestions)
-    CLI->>CE: Exec summary + findings text
-    CE->>CE: Llama → Grammarly (serial)
-    CE-->>CLI: Suggested edits
+    User->>CLI: Press c generate exec summary
+    CLI->>CE: Provide findings list and template sections
+    CE->>CE: Llama then Grammarly per section
+    CE-->>CLI: Generated sections
+    CLI->>CLI: Save to suggested exec summary fields
+    CLI->>CLI: Ensure suggested findings list exists
+    CLI->>CLI: generate_visual_reportdiff
   end
 
-  CLI->>CLI: Build sentence hunks + visual diffs
-  User->>CLI: Open diff (d) to inspect
+  alt User presses r to suggest finding edits
+    User->>CLI: Press r run suggestions
+    CLI->>CE: Provide finding texts
+    CE-->>CLI: Suggested finding edits
+    CLI->>CLI: Save to suggested findings
+    CLI->>CLI: generate_visual_reportdiff
+  else Skip finding suggestions
+    CLI-->>CLI: Continue with exec summary only
+  end
 
-  User->>CLI: Enter Update Mode (u)
-  loop For each Section (Exec Field or Finding Section)
-    Note over CLI: Row 0=menu • Row 1=title • Row 2+=scrollable
+  User->>CLI: Press d open diff view
+
+  User->>CLI: Press u enter update mode
+  loop For each section exec field or finding section
+    Note over CLI: Row 0 menu, Row 1 title, Row 2 and below scrollable
 
     par View toggle
-      User->>CLI: Press v → Full diff view
-      User->>CLI: Press f → Focus view (hunk + context)
+      User->>CLI: Press v full diff view
+      User->>CLI: Press f focus view
     and Navigation
-      User->>CLI: ↑/↓ scroll • PgUp/PgDn page
-      User->>CLI: n/p next/prev hunk (focus)
+      User->>CLI: Use arrow keys to scroll
+      User->>CLI: Use PageUp PageDown to page
+      User->>CLI: Use n or p for next or previous hunk
     end
 
-    loop For each Hunk (change)
-      alt a = accept
+    loop For each hunk change
+      alt a accept
         User->>CLI: Press a
-        CLI->>CLI: Mark hunk = accepted
-        CLI->>CLI: Recompute staged_text
-      else s = skip
+        CLI->>CLI: Mark hunk accepted
+        CLI->>CLI: Recompute staged text
+      else s skip
         User->>CLI: Press s
-        CLI->>CLI: Mark hunk = rejected
-        CLI->>CLI: Recompute staged_text
-      else e = edit+accept
+        CLI->>CLI: Mark hunk rejected
+        CLI->>CLI: Recompute staged text
+      else e edit and accept
         User->>CLI: Press e
-        CLI->>CLI: Open $EDITOR with hunk text
-        CLI->>CLI: Mark hunk = edited
-        CLI->>CLI: Update hunk text + recompute staged_text
+        CLI->>CLI: Open editor with hunk text
+        CLI->>CLI: Mark hunk edited
+        CLI->>CLI: Update hunk text
+        CLI->>CLI: Recompute staged text
       end
     end
 
-    alt Enter = apply section
+    alt Enter apply section
       User->>CLI: Press Enter
-      CLI->>API: update_exec_summary()/update_finding() with staged_text
-      API->>PT: PUT updated content
+      CLI->>API: PUT updated section
+      API->>PT: Update content
       PT-->>API: 200 OK
       API-->>CLI: Success
-      CLI->>CLI: log_change() for accepted/edited hunks
-    else q = quit section
+      CLI->>CLI: log_change for accepted or edited hunks
+    else q quit section
       User->>CLI: Press q
       CLI-->>API: No PUT
       CLI-->>CLI: No logging
@@ -170,5 +184,7 @@ sequenceDiagram
   end
 
   User-->>CLI: Quit
+
+
 
 ```
