@@ -4,7 +4,7 @@
 - Thanks to Danny Nassre (nassre@gmail.com) for providing the LLM Integration
 
 Todo's:
-- Generate executive summary from a list of findings
+- Generate executive summary from a list of findings - In progress
 - Check if executive summary matches the report findings
 - Unit tests
 
