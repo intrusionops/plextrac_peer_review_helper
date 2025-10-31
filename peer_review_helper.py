@@ -662,7 +662,8 @@ class PlexTracAPI:
             time.sleep(3)
             return False
 
-        findings = self.report_findings_content or []
+        findings = self.report_findings_content if original else ((self.suggestedfixes_from_llm or {}).get("findings") or [])
+
         # ---- find target finding ----
         target = None
         for f in findings:
@@ -795,76 +796,134 @@ class PlexTracAPI:
                                              )
         return report_findings_content
 
-
     def generate_visual_reportdiff(self):
-        """Generate a word-based diff between the original report and LLM-suggested, formatted for curses, with full and chunked storage."""
+        """Generate sentence-based diffs for exec summary + findings.
+        Safe when only some suggestions exist (mirrors originals if modified is missing).
+        Also builds self.visual_diff_chunks for per-section/per-finding views.
+        """
         exec_summary_diffs = []
         report_findings_diffs = []
-        self.visual_diff_chunks = {}  # New: chunked diffs per field/finding
+        self.visual_diff_chunks = {}
 
         def sentence_diff(original, modified):
-            """Generate a sentence-based diff for curses display."""
+            """Sentence-based diff. Keeps periods and whitespace splitting similar to display."""
             diff = difflib.ndiff(
-                re.split(r'(?<=\.)\s*', original.strip()),
-                re.split(r'(?<=\.)\s*', modified.strip())
+                re.split(r'(?<=\.)\s*', (original or "").strip()),
+                re.split(r'(?<=\.)\s*', (modified or "").strip())
             )
-            formatted_diff = []
-
+            out = []
             for token in diff:
                 if token.startswith("+ "):
-                    formatted_diff.append(("add", token[2:]))
+                    out.append(("add", token[2:]))
                 elif token.startswith("- "):
-                    formatted_diff.append(("remove", token[2:]))
+                    out.append(("remove", token[2:]))
                 else:
-                    formatted_diff.append(("normal", token[2:]))
-            return formatted_diff
+                    out.append(("normal", token[2:]))
+            return out
 
-        # Diff Executive Summary
-        original_execsummary = self.report_content.get("exec_summary", {}).get("custom_fields", [])
-        modified_execsummary = self.suggestedfixes_from_llm.get("executive_summary_custom_fields", {}).get("custom_fields", [])
+        # ---------- Executive Summary ----------
+        orig_exec = (self.report_content or {}).get("exec_summary", {}).get("custom_fields", []) or []
+        mod_exec_cont = (self.suggestedfixes_from_llm or {}).get("executive_summary_custom_fields", {}) or {}
+        mod_exec = mod_exec_cont.get("custom_fields")
+        if mod_exec is None:
+            # No modified exec summary yet -> mirror originals to avoid crashing and show "no changes"
+            mod_exec = [dict(cf) for cf in orig_exec]
 
-        for idx, (i1, i2) in enumerate(zip(original_execsummary, modified_execsummary)):
-            label = i1.get("label", "Unknown Section")
+        def _cf_key(cf, fallback_idx=None):
+            return str(cf.get("id") or cf.get("field_id") or cf.get("label") or (f"idx:{fallback_idx}" if fallback_idx is not None else "unk"))
+
+        # Order keys: keep original order, then any extra keys from modified
+        orig_keys = []
+        for i, cf in enumerate(orig_exec):
+            orig_keys.append(_cf_key(cf, i))
+        mod_keys = []
+        for i, cf in enumerate(mod_exec):
+            mod_keys.append(_cf_key(cf, i))
+
+        seen = set()
+        ordered_keys = []
+        for k in orig_keys + mod_keys:
+            if k not in seen:
+                ordered_keys.append(k)
+                seen.add(k)
+
+        # Build maps for quick lookup
+        orig_map = {_cf_key(cf, i): cf for i, cf in enumerate(orig_exec)}
+        mod_map = {_cf_key(cf, i): cf for i, cf in enumerate(mod_exec)}
+
+        for idx, key in enumerate(ordered_keys):
+            cf_o = orig_map.get(key, {}) or {}
+            cf_m = mod_map.get(key, {}) or {}
+
+            label = cf_o.get("label") or cf_m.get("label") or "Unknown Section"
+            text_o = cf_o.get("text", "") or ""
+            text_m = cf_m.get("text", "") or ""
+
             exec_summary_diffs.append(("title", f"=== {label} ==="))
-
-            diffs = sentence_diff(i1.get("text", ""), i2.get("text", ""))
+            diffs = sentence_diff(text_o, text_m)
             exec_summary_diffs.extend(diffs)
-            exec_summary_diffs.append(("normal", ""))  # Blank line for spacing
+            exec_summary_diffs.append(("normal", ""))
 
-            # Store chunk
+            # chunk for focused/full views
             self.visual_diff_chunks[f"exec_summary_{idx}"] = [("title", f"=== {label} ===")] + diffs
 
-        # Diff Findings
-        findings = self.report_findings_content
-        modified_findings = self.suggestedfixes_from_llm.get("findings", [])
+        # ---------- Findings ----------
+        orig_findings = self.report_findings_content or []
+        mod_findings = (self.suggestedfixes_from_llm or {}).get("findings")
+        if mod_findings is None:
+            # Mirror originals when no suggestions exist for findings
+            mod_findings = [dict(f) for f in orig_findings]
 
-        for idx, (i1, i2) in enumerate(zip(findings, modified_findings)):
-            finding_title = i1.get("title", "Untitled Finding")
-            report_findings_diffs.append(("title", f"=== {finding_title} ==="))
+        def _fid(f, fallback_idx=None):
+            return str(f.get("id") or f.get("finding_id") or f.get("flaw_id") or f.get("title") or (f"idx:{fallback_idx}" if fallback_idx is not None else "unk"))
 
-            for section in ["title", "description", "recommendations", "guidance", "reproduction_steps"]:
+        orig_fkeys = []
+        for i, f in enumerate(orig_findings):
+            orig_fkeys.append(_fid(f, i))
+        mod_fkeys = []
+        for i, f in enumerate(mod_findings):
+            mod_fkeys.append(_fid(f, i))
+
+        seen_f = set()
+        ordered_fkeys = []
+        for k in orig_fkeys + mod_fkeys:
+            if k not in seen_f:
+                ordered_fkeys.append(k)
+                seen_f.add(k)
+
+        orig_fmap = {_fid(f, i): f for i, f in enumerate(orig_findings)}
+        mod_fmap  = {_fid(f, i): f for i, f in enumerate(mod_findings)}
+
+        def _get_field(obj, name):
+            if name in ("guidance", "reproduction_steps"):
+                return (obj or {}).get("fields", {}).get(name, {}).get("value", "") or ""
+            return (obj or {}).get(name, "") or ""
+
+        sections = ["title", "description", "recommendations", "guidance", "reproduction_steps"]
+
+        for find_idx, fkey in enumerate(ordered_fkeys):
+            f_o = orig_fmap.get(fkey, {}) or {}
+            f_m = mod_fmap.get(fkey, {}) or {}
+
+            title_o = f_o.get("title", "") or "Untitled Finding"
+            report_findings_diffs.append(("title", f"=== {title_o} ==="))
+
+            for section in sections:
                 report_findings_diffs.append(("section", f"{section.capitalize()}:"))
+                text_o = _get_field(f_o, section)
+                text_m = _get_field(f_m, section)
 
-                if section not in ["guidance", "reproduction_steps"]:
-                    diffs = sentence_diff(i1.get(section, ""), i2.get(section, ""))
-                else:
-                    diffs = sentence_diff(
-                        i1.get("fields", {}).get(section, {}).get("value", ""),
-                        i2.get("fields", {}).get(section, {}).get("value", "")
-                    )
-
+                diffs = sentence_diff(text_o, text_m)
                 report_findings_diffs.extend(diffs)
-                report_findings_diffs.append(("normal", ""))  # Blank line for spacing
+                report_findings_diffs.append(("normal", ""))
 
-                # Store chunk
-                self.visual_diff_chunks[f"finding_{idx}_{section}"] = [("section", f"{section.capitalize()}:")] + diffs
+                self.visual_diff_chunks[f"finding_{find_idx}_{section}"] = [("section", f"{section.capitalize()}:")] + diffs
 
-        # Store full diff for full view mode
+        # ---------- Store combined ----------
         self.visual_diff = exec_summary_diffs + report_findings_diffs
         self.visual_diff_generated = True
-
         return self.visual_diff
-    # --------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------------
 
 
 # User Interface 
@@ -943,15 +1002,54 @@ def interactive_text_viewer(stdscr, pages):
         # Import updates into PlexTrac
         elif key == ord('u') and api.retrieved_suggestedfixes_from_llm:
             import_llm_suggestions(api, stdscr, max_x, max_y)
-        # Use llm to generate executive summary from the findings list
-        elif key == ord('c') and api.retrieved_suggestedfixes_from_llm:
-            stdscr.addstr(1, 0, "Generating executive summary with LLM...", curses.A_BOLD)
-            stdscr.refresh()
-            new_sections=api.generate_executive_summary("templates/execsummary.yml", use_llama=api.use_llama, use_grammarly=api.use_grammarly)
-            api.suggestedfixes_from_llm["executive_summary_custom_fields"] = {
-                "custom_fields": new_sections
-            }
-            api.generate_visual_reportdiff()
+        # Use LLM to generate executive summary from the findings list
+        elif key == ord('c'):  # allow on first run and subsequent runs
+            try:
+                # 1) UI hint
+                try:
+                    stdscr.addstr(1, 2, "Generating executive summary from LLM…", curses.A_BOLD)
+                    stdscr.clrtoeol()
+                    stdscr.refresh()
+                except Exception:
+                    pass
+
+                # 2) Generate sections (uses your existing method + flags)
+                sections = api.generate_executive_summary(
+                    template_path="templates/execsummary.yml",
+                    use_llama=api.use_llama,
+                    use_grammarly=api.use_grammarly,
+                )
+
+                # 3) Stash into suggestedfixes structure (create container if missing)
+                if api.suggestedfixes_from_llm.get("executive_summary_custom_fields") is None:
+                    api.suggestedfixes_from_llm["executive_summary_custom_fields"] = {"custom_fields": []}
+                api.suggestedfixes_from_llm["executive_summary_custom_fields"]["custom_fields"] = sections
+
+                # 4) Mark suggestions present and rebuild visual diffs
+                api.retrieved_suggestedfixes_from_llm = True
+                api.generate_visual_reportdiff()
+
+                # 5) Optional: switch to LLM view so user sees it immediately
+                current_view = "LLM VIEW-"
+                page_index = 0
+                scroll_offset = 0
+
+                # Optional: brief success message
+                try:
+                    stdscr.addstr(1, 2, "Executive summary generated. Press d to see diffs or u to update.", curses.A_BOLD)
+                    stdscr.clrtoeol()
+                    stdscr.refresh()
+                except Exception:
+                    pass
+
+            except Exception as e:
+                # Non-fatal: show error on the banner line
+                try:
+                    stdscr.addstr(1, 2, f"Exec summary generation failed: {e}", curses.A_BOLD)
+                    stdscr.clrtoeol()
+                    stdscr.refresh()
+                except Exception:
+                    pass
 
 
 def import_llm_suggestions(api, stdscr, max_x, max_y):
@@ -969,8 +1067,9 @@ def import_llm_suggestions(api, stdscr, max_x, max_y):
     time.sleep(1)
 
     exec_summary_fields = deepcopy(api.report_content.get("exec_summary", {}).get("custom_fields", []))
-    updated_exec_summary_fields = deepcopy(api.suggestedfixes_from_llm.get("executive_summary_custom_fields", {}).get("custom_fields", []))
-
+    updated_exec_summary_fields = deepcopy(
+        (api.suggestedfixes_from_llm.get("executive_summary_custom_fields", {}) or {}).get("custom_fields") or []
+    )
     for idx, (field, updated_field) in enumerate(zip(exec_summary_fields, updated_exec_summary_fields)):
 
         field_id = field.get("id")
@@ -1002,8 +1101,8 @@ def import_llm_suggestions(api, stdscr, max_x, max_y):
     stdscr.refresh()
     time.sleep(1)
 
-    findings = deepcopy(api.report_findings_content)
-    updated_findings = deepcopy(api.suggestedfixes_from_llm.get("findings", []))
+    findings = deepcopy(api.report_findings_content or [])
+    updated_findings = deepcopy((api.suggestedfixes_from_llm or {}).get("findings") or [])
 
     fields_to_review = ["title", "description", "recommendations", "guidance", "reproduction_steps"]
 
