@@ -2,6 +2,7 @@
 
 - NLP based suggestions for report edits
 - Thanks to Danny Nassre (nassre@gmail.com) for providing the LLM Integration
+- See the assets directory for architecture and workflow diagram
 
 Todo's:
 - Generate executive summary from a list of findings - In progress
