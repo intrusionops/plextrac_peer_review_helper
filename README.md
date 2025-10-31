@@ -7,7 +7,7 @@
 Todo's:
 - Generate executive summary from a list of findings - In progress
 - Check if executive summary matches the report findings
-- findings generation given raw artifacts and brief descriptions
+- findings generation given raw artifacts and brief descriptions (alert if a finding already exists, chose to merge, overwrite, etc..)
 - Unit tests
 
 # Requirements
