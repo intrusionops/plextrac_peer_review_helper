@@ -1,16 +1,25 @@
-# exec_template.yml
 - id: overview
-  label: "Overview"
+  label: Executive Overview
   system_prompt: |
-    Rewrite this to make it easier to understand: PentestCompany was engaged by Acme to conduct an internal network penetration test in March 2024. The affected assets, technical details, and recommended remediation steps for each individual finding are documented in the High Risk Findings, Medium Risk Findings, and Low Risk Findings sections of this report. This engagement resulted in several findings:
+    You are drafting a concise executive overview for a penetration test report.
+    Use only the facts implied by the findings list below.
+    Keep it 4-6 sentences, C-level, no new facts.
+    Findings:
     {{FINDINGS_JSON_SNIPPET_HERE}}
 
-# exec_template.yml
 - id: scope
-  label: "Scope"
+  label: Scope & Method
   system_prompt: |
-    Scope: The scope of the internal network penetration test included the following assets:
-    10.0.0.0/8
-    172.16.0.0/12
-    192.168.0.0/16
+    Summarize the scope and high-level approach based ONLY on the findings list.
+    Avoid invented details, keep it neutral and brief (3-5 sentences).
+    Findings:
+    {{FINDINGS_JSON_SNIPPET_HERE}}
+
+- id: risk_summary
+  label: Risk Summary
+  system_prompt: |
+    Provide a short risk summary (2-4 sentences) that reflects the overall posture
+    demonstrated by these findings. Do not exaggerate or add new info.
+    Findings:
+    {{FINDINGS_JSON_SNIPPET_HERE}}
 
