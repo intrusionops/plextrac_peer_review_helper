@@ -10,6 +10,10 @@ from collections import Counter
 from typing import Callable
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
+import re, math
+from collections import Counter, defaultdict
 
 
 class LlamaModel:
@@ -423,3 +427,115 @@ def add_inline_tags(text: str, tag_list: list[Tag]) -> str:
         match_counter[tag_text] += 1
         text = replace_nth(text, tag_text, str(tag), match_counter[tag_text])
     return text
+
+
+
+# Exec Summary Consistency Checker (for ensuring findings and exec summary match)
+##################################################################################
+
+# --- Exec Summary Consistency: dataclass + helpers --------------------------
+
+try:
+    import spacy
+    _NLP = spacy.load("en_core_web_sm")
+except Exception:
+    _NLP = None
+
+
+@dataclass
+class ConsistencyFindingCoverage:
+    covered: bool
+    score: float
+    evidence: str  # small excerpt explaining why
+
+
+@dataclass
+class ConsistencyResult:
+    coverage: Dict[str, ConsistencyFindingCoverage]       # by finding_id/title key
+    covered_ids: List[str]
+    uncovered_ids: List[str]
+    severity_alignment_ok: bool
+    summary_max_sev: str
+    findings_max_sev: str
+    contradictions: List[str]
+    theme_gaps: List[Dict[str, object]]                   # [{theme, example_findings:[ids/titles]}]
+    confidence: int                                       # 0..100
+    summary_tokens: List[str]                             # tokens extracted from summary
+    summary_severities: List[str]                         # severities seen in summary
+
+
+_SEV_ORDER = ["critical", "high", "medium", "low", "informational"]
+_SEV_RANK = {s: i for i, s in enumerate(_SEV_ORDER)}
+
+_STOP = set("""
+a an the of and or to for from into with without not this that these those be is are was were been being have has had by on in as at which who whom whose it its they them we you i our your their
+""".split())
+
+_WORD = re.compile(r"[A-Za-z0-9_.:/-]{2,}")
+
+def _simple_tokens(text: str) -> List[str]:
+    toks = [t.lower() for t in _WORD.findall(text or "")]
+    return [t for t in toks if t not in _STOP]
+
+def _spacy_nouns_phrases(text: str) -> List[str]:
+    if not _NLP:
+        return []
+    doc = _NLP(text or "")
+    out = []
+    for np in doc.noun_chunks:
+        tok = re.sub(r"\s+", " ", np.text.strip().lower())
+        if tok and tok not in _STOP:
+            out.append(tok)
+    for t in doc:
+        if t.pos_ in {"PROPN", "NOUN"}:
+            out.append(t.lemma_.lower())
+    return [t for t in out if t and t not in _STOP]
+
+def _extract_finding_facets(f: dict) -> dict:
+    title = (f.get("title") or "").strip()
+    desc  = (f.get("description") or "").strip()
+    recs  = (f.get("recommendations") or "").strip()
+    sev   = (f.get("severity") or f.get("Severity") or "").strip().lower()
+    tags  = f.get("tags") or []
+    fields = f.get("fields") or {}
+    guidance = (fields.get("guidance", {}) or {}).get("value", "")
+    repro    = (fields.get("reproduction_steps", {}) or {}).get("value", "")
+
+    base = " ".join([title, desc, guidance, repro])
+    toks = _simple_tokens(base) + tags
+    toks += _spacy_nouns_phrases(base)
+    return {
+        "title": title,
+        "severity": sev if sev in _SEV_RANK else "",
+        "tokens": toks[:500],  # cap
+    }
+
+def _extract_summary_facets(exec_text: str) -> dict:
+    toks = _simple_tokens(exec_text)
+    toks += _spacy_nouns_phrases(exec_text)
+    # severities spotted in summary text
+    sevs = [s for s in _SEV_ORDER if s in (exec_text or "").lower()]
+    return {"tokens": toks[:700], "severities": sevs or []}
+
+def _jaccard(a: List[str], b: List[str]) -> float:
+    if not a or not b:
+        return 0.0
+    A, B = set(a), set(b)
+    inter = len(A & B)
+    union = len(A | B)
+    return inter / union if union else 0.0
+
+def _max_sev(values: List[str]) -> str:
+    vals = [v for v in values if v in _SEV_RANK]
+    if not vals: return ""
+    return min(vals, key=lambda s: _SEV_RANK[s])  # smaller index = higher severity
+
+def _severity_alignment(summary_sevs: List[str], finding_sevs: List[str]) -> Tuple[bool, str, str]:
+    s_max = _max_sev(summary_sevs)
+    f_max = _max_sev(finding_sevs)
+    if not f_max:
+        return True, s_max or "", f_max or ""
+    if not s_max:
+        return False, s_max or "", f_max or ""
+    return _SEV_RANK[s_max] <= _SEV_RANK[f_max], s_max, f_max
+
