@@ -1,25 +1,97 @@
-- id: overview
-  label: Executive Overview
-  system_prompt: |
-    You are drafting a concise executive overview for a penetration test report.
-    Use only the facts implied by the findings list below.
-    Keep it 4-6 sentences, C-level, no new facts.
-    Findings:
-    {{FINDINGS_JSON_SNIPPET_HERE}}
+# templates/execsummary.yml
 
-- id: scope
-  label: Scope & Method
+- id: header
+  label: Header
   system_prompt: |
-    Summarize the scope and high-level approach based ONLY on the findings list.
-    Avoid invented details, keep it neutral and brief (3-5 sentences).
-    Findings:
-    {{FINDINGS_JSON_SNIPPET_HERE}}
+    ROLE: Write the opening paragraph for an Executive Summary in a pentest report.
 
-- id: risk_summary
-  label: Risk Summary
+    REQUIREMENTS:
+    - Use EXACT structure and tone below; do not invent details.
+    - Use placeholders already computed for client and vendor names.
+    - Use "{{REPORT_MONTH_YEAR}}" for the month and year.
+    - Return ONE paragraph. No headings, no bullets, no preface.
+
+    TEXT TO PRODUCE (fill the bracketed parts):
+    The {{CLIENT_NAME}} ("Company") contracted {{VENDOR_NAME}}, a security services company, to perform {{TEST_TYPES_ENGLISH}} penetration tests of their networks to pinpoint any configuration issues that could lead to potential security vulnerabilities and identify potential security weaknesses threatening the integrity and confidentiality of information. This report contains the results of such tests performed in {{REPORT_MONTH_YEAR}}. All information included in this report is highly confidential and cannot be disclosed without prior authorization from Company.
+
+    CONTEXT (findings list for reference ONLY; do not enumerate):
+    {{FINDINGS_ROWS}}
+
+- id: external
+  label: External
   system_prompt: |
-    Provide a short risk summary (2-4 sentences) that reflects the overall posture
-    demonstrated by these findings. Do not exaggerate or add new info.
-    Findings:
-    {{FINDINGS_JSON_SNIPPET_HERE}}
+    ROLE: Write the "External" subsection blurb for an Executive Summary.
+    SCOPE: Internet-facing posture only.
+
+    REQUIREMENTS:
+    - 2–4 sentences, leadership tone, no IDs (no CWE/CVE), no endpoints.
+    - Synthesize key themes and risk posture suggested by the findings related to EXTERNAL exposure.
+    - If little/no external signal exists, state that external posture appears limited with no material issues observed from available data.
+    - Return ONLY the paragraph text.
+
+    CONTEXT:
+    Selected test types: {{TEST_TYPES}}
+    Findings (for reference; do not list them): 
+    {{FINDINGS_ROWS}}
+
+- id: internal
+  label: Internal
+  system_prompt: |
+    ROLE: Write the "Internal" subsection blurb for an Executive Summary.
+    SCOPE: Internal network posture only.
+
+    REQUIREMENTS:
+    - 2–4 sentences; focus on lateral movement constraints, segmentation, secrets hygiene, privilege boundaries.
+    - No IDs/endpoint dump. Executive tone. No bullets.
+    - If little/no internal signal exists, note limited internal visibility from available data.
+    - Return ONLY the paragraph text.
+
+    CONTEXT:
+    Selected test types: {{TEST_TYPES}}
+    Findings (reference only): 
+    {{FINDINGS_ROWS}}
+
+- id: webapp
+  label: Webapp
+  system_prompt: |
+    ROLE: Write the "Webapp" subsection blurb for an Executive Summary.
+    SCOPE: Application layer.
+
+    REQUIREMENTS:
+    - 2–4 sentences; emphasize auth/session, input handling, data exposure, tenant isolation themes.
+    - No IDs/endpoint dump. Executive tone. No bullets.
+    - If little/no webapp signal exists, state that from available data no material app-layer issues were observed.
+    - Return ONLY the paragraph text.
+
+    CONTEXT:
+    Selected test types: {{TEST_TYPES}}
+    Findings (reference only): 
+    {{FINDINGS_ROWS}}
+
+- id: mobile
+  label: Mobile
+  system_prompt: |
+    ROLE: Write the "Mobile" subsection blurb for an Executive Summary.
+    SCOPE: Mobile app posture.
+
+    REQUIREMENTS:
+    - 2–4 sentences; emphasize local storage, transport security, certificate pinning, secret handling.
+    - No IDs/endpoint dump. Executive tone. No bullets.
+    - If little/no mobile signal exists, say so succinctly.
+    - Return ONLY the paragraph text.
+
+    CONTEXT:
+    Selected test types: {{TEST_TYPES}}
+    Findings (reference only): 
+    {{FINDINGS_ROWS}}
+
+- id: footer
+  label: Footer
+  system_prompt: |
+    ROLE: Produce the footer paragraph EXACTLY as specified below. Do not alter wording.
+
+    OUTPUT (verbatim, replacing Vendor name only if provided):
+    Vulnerabilities will always be present so a key strategy to minimize risk and exposure is having visibility into attacks. Synchronizing a Red-Team attack with the defenses of the Blue-Team, and corroborating tactics and events to harden defenses, is known as a Purple-Team. This level of security monitoring quality assurance was not in scope for this project, but {{FOOTER_VENDOR}} advises to review alerts generated during the penetration test and cross referencing them to ensure visibility is optimal.
+
+    Return ONLY this paragraph (with the vendor name filled).
 
