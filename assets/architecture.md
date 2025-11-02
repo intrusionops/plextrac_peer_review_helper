@@ -1,79 +1,84 @@
 The below diagrams show the architecture of the tool and its review workflow:
 
 ```mermaid
-%%{init: {
-  "theme": "dark",
-  "themeVariables": {
-    "background": "transparent",
-    "primaryTextColor": "#e5e7eb",
-    "lineColor": "#93c5fd",
-    "fontFamily": "Arial, Helvetica, sans-serif"
+%%{init:{
+  "theme":"dark",
+  "themeVariables":{
+    "background":"transparent",
+    "primaryTextColor":"#e5e7eb",
+    "lineColor":"#93c5fd",
+    "fontFamily":"Arial, Helvetica, sans-serif"
   },
-  "flowchart": {
-    "htmlLabels": false,
-    "nodeSpacing": 45,
-    "rankSpacing": 55,
-    "useMaxWidth": true
-  }
+  "flowchart":{"htmlLabels":false,"nodeSpacing":45,"rankSpacing":55,"useMaxWidth":true}
 }}%%
 flowchart TD
-  U["User in Terminal"] -->|runs CLI| CLI["peer_review_helper.py (CLI &#43; Curses UI)"]
+  U["User (Terminal)"] -->|runs CLI| CLI["peer_review_helper.py<br/>(entrypoint)"]
 
-  subgraph PT["PlexTrac"]
-    PTAPI["PlexTrac REST API"]
-    DB["Reports &amp; Findings"]
-    PTAPI --- DB
+  subgraph UI["user_interface.py"]
+    IV["interactive_text_viewer<br/>(paging, scroll, status toasts)"]
+    UM["update mode (per-hunk)<br/>review_section_changes_tui"]
+    DV["diff views<br/>focus &amp; full<br/>display_visual_diff_chunk_with_scroll"]
+    TP["type picker<br/>pick_test_types"]
   end
 
-  subgraph CORE["Peer Review Helper - Core"]
-    API["PlexTracAPI<br/>(auth, token refresh, GET/PUT, export)"]
-    DIFF["Diff Builder<br/>(sentence/word diffs)"]
-    LOG["Audit Log<br/>(peer_review_log.json)"]
-    API --> DIFF
-    API --> LOG
+  subgraph CORE["Core (API + Orchestration)"]
+    API["PlexTracAPI<br/>(auth, token refresh,<br/>GET/PUT, export)"]
+    VDG["generate_visual_reportdiff<br/>(builds visual chunks)"]
+    LOG["audit log<br/>log_change / log_llm_interaction"]
   end
 
-  subgraph NLP["Copy Editing Pipeline"]
-    CE["CopyEditor<br/>(serial pipeline)"]
-    SPACY["spaCy<br/>(tokenization)"]
-    HTML["HTML-aware editing<br/>(tag strip/reinsert)"]
-    CE --> SPACY
-    CE --> HTML
-
-    subgraph LLMs["Model Backends"]
-      LLAMA["Llama via Ollama<br/>(local or remote)"]
+  subgraph NLP["models.py (LLM pipeline)"]
+    CE["CopyEditor<br/>(get_edits)"]
+    SP["spaCy (tokenize)"]
+    subgraph LLMs["Backends"]
+      LLAMA["Llama via Ollama<br/>(local/remote)"]
       GRAM["Grammarly-style model<br/>(TGI or HF pipeline)"]
     end
+    CE --> SP
     CE --> LLAMA
     CE --> GRAM
   end
 
-  CLI --> API
-  CLI --> CE
-  CE -->|suggestions| CLI
-  CLI --> DIFF
-  DIFF -->|visual chunks| CLI
-  CLI -->|accept / skip / edit| API
-  API -->|on&nbsp;success| LOG
+  subgraph UTIL["utils.py"]
+    UT1["text helpers<br/>_replace_placeholders,<br/>_execsum_postprocess,<br/>_execsum_scrub_ids"]
+    UT2["diff helpers<br/>_split_sentences_for_diff,<br/>_make_full_chunk,<br/>build_sentence_hunks"]
+    UT3["UI helpers<br/>_toast, soft formatters"]
+    UT4["finding helpers<br/>_finding_row, concat exec pages"]
+  end
 
-  PTAPI <--> API
+  subgraph PT["PlexTrac"]
+    PTAPI["PlexTrac REST"]
+    DB["Reports &amp; Findings"]
+    PTAPI --- DB
+  end
+
+  %% Wiring
+  CLI --> UI
+  UI --> API
+  UI --> VDG
+  UI --> CE
+  API --> LOG
+  CE -->|suggestions & sections| UI
+  VDG -->|visual chunks| UI
+  API <--> PTAPI
 
   %% Colors
   classDef cli fill:#1d4ed8,stroke:#93c5fd,color:#f9fafb;
-  classDef api fill:#6d28d9,stroke:#c4b5fd,color:#f9fafb;
-  classDef diff fill:#065f46,stroke:#34d399,color:#ecfdf5;
+  classDef ui fill:#0ea5e9,stroke:#93c5fd,color:#f9fafb;
+  classDef core fill:#6d28d9,stroke:#c4b5fd,color:#f9fafb;
   classDef log fill:#b45309,stroke:#fbbf24,color:#fff7ed;
   classDef llm fill:#0e7490,stroke:#67e8f9,color:#ecfeff;
-  classDef nlp fill:#166534,stroke:#86efac,color:#ecfdf5;
+  classDef util fill:#065f46,stroke:#34d399,color:#ecfdf5;
   classDef pt fill:#991b1b,stroke:#fecaca,color:#fff1f2;
 
   class CLI cli;
-  class API api;
-  class DIFF diff;
+  class IV,UM,DV,TP ui;
+  class API,VDG core;
   class LOG log;
-  class LLAMA,GRAM llm;
-  class CE,SPACY,HTML nlp;
+  class CE,SP,LLAMA,GRAM llm;
+  class UT1,UT2,UT3,UT4 util;
   class PTAPI,DB pt;
+
 ```
 
 
@@ -85,106 +90,98 @@ This diagram shows the review workflow:
 
 
 ```mermaid
-%%{init: {
-  "theme": "dark",
-  "themeVariables": {
+%%{init:{
+  "theme":"dark",
+  "themeVariables":{
     "background":"transparent",
     "primaryTextColor":"#e5e7eb",
-    "fontFamily": "Arial, Helvetica, sans-serif"
+    "fontFamily":"Arial, Helvetica, sans-serif"
   }
 }}%%
 sequenceDiagram
   autonumber
   participant User as User
-  participant CLI as peer_review_helper (CLI/TUI)
+  participant CLI as CLI entry
+  participant UI as UI (curses TUI)
   participant API as PlexTracAPI
-  participant CE as CopyEditor (LLM)
+  participant CE as CopyEditor
   participant PT as PlexTrac REST
 
   rect rgba(37,99,235,0.15)
-    User->>CLI: Launch with server client report
-    CLI->>API: authenticate
-    API->>PT: POST /auth
+    User->>CLI: Launch with server/client/report
+    CLI->>API: authenticate()
+    API->>PT: POST /authenticate
     PT-->>API: token
-    API-->>CLI: OK start refresh token thread
+    API-->>CLI: start token refresh thread
   end
 
   rect rgba(34,197,94,0.18)
-    CLI->>API: get_full_report_content
-    API->>PT: GET report and findings
-    PT-->>API: payload
+    CLI->>API: load report & findings
+    API->>PT: GET report, GET findings, GET finding bodies
+    PT-->>API: payloads
     API-->>CLI: data loaded
+    CLI->>UI: open interactive_text_viewer
   end
 
   rect rgba(245,158,11,0.22)
-    User->>CLI: Press c generate exec summary
-    CLI->>CE: Provide findings list and template sections
-    CE->>CE: Llama then Grammarly per section
-    CE-->>CLI: Generated sections
-    CLI->>CLI: Save to suggested exec summary fields
-    CLI->>CLI: Ensure suggested findings list exists
-    CLI->>CLI: generate_visual_reportdiff
+    User->>UI: Press c (generate / regen exec summary)
+    UI->>UI: pick_test_types (multi-select)
+    UI->>CE: For each template section → get_edits(full_prompt)
+    CE-->>UI: raw section text
+    UI->>CLI: postprocess + persist suggested sections
+    CLI->>CLI: generate_visual_reportdiff (exec summary vs original)
+    CLI->>CLI: log_llm_interaction (section, model, prompt, response)
   end
 
-  alt User presses r to suggest finding edits
-    User->>CLI: Press r run suggestions
-    CLI->>CE: Provide finding texts
-    CE-->>CLI: Suggested finding edits
-    CLI->>CLI: Save to suggested findings
-    CLI->>CLI: generate_visual_reportdiff
-  else Skip finding suggestions
-    CLI-->>CLI: Continue with exec summary only
+  alt User presses r (suggest finding edits)
+    UI->>CE: get_edits(title/body/guidance/repro)
+    CE-->>UI: suggested edits per finding field
+    UI->>CLI: persist suggested findings
+    CLI->>CLI: generate_visual_reportdiff (findings vs original)
+  else Skip
+    UI-->>UI: keep current suggestions
   end
 
-  User->>CLI: Press d open diff view
+  User->>UI: Press d (open diff mode)
+  UI-->>User: Focus or full diff (scrollable)
 
-  User->>CLI: Press u enter update mode
-  loop For each section exec field or finding section
-    Note over CLI: Row 0 menu, Row 1 title, Row 2 and below scrollable
+  User->>UI: Press u (enter update mode)
 
-    par View toggle
-      User->>CLI: Press v full diff view
-      User->>CLI: Press f focus view
-    and Navigation
-      User->>CLI: Use arrow keys to scroll
-      User->>CLI: Use PageUp PageDown to page
-      User->>CLI: Use n or p for next or previous hunk
-    end
+  loop For each section (exec fields, then finding fields)
+    Note over UI: Row 0 menu • Row 1 title • Rows 2+ content<br/>n/p = next/prev hunk, v = full, f = focus, arrows = scroll
+    UI-->>User: Show focused hunk or full diff
 
-    loop For each hunk change
-      alt a accept
-        User->>CLI: Press a
-        CLI->>CLI: Mark hunk accepted
-        CLI->>CLI: Recompute staged text
-      else s skip
-        User->>CLI: Press s
-        CLI->>CLI: Mark hunk rejected
-        CLI->>CLI: Recompute staged text
-      else e edit and accept
-        User->>CLI: Press e
-        CLI->>CLI: Open editor with hunk text
-        CLI->>CLI: Mark hunk edited
-        CLI->>CLI: Update hunk text
-        CLI->>CLI: Recompute staged text
+    loop For each hunk (atomic change)
+      alt a = accept
+        User->>UI: a
+        UI->>UI: mark hunk accepted
+        UI->>UI: recompute staged text
+      else s = skip
+        User->>UI: s
+        UI->>UI: mark hunk rejected
+        UI->>UI: recompute staged text
+      else e = edit+accept
+        User->>UI: e (open vi)
+        UI-->>User: edit buffer
+        User->>UI: save/quit vi
+        UI->>UI: mark hunk edited, update staged text
       end
     end
 
-    alt Enter apply section
-      User->>CLI: Press Enter
-      CLI->>API: PUT updated section
-      API->>PT: Update content
+    alt Enter = apply section
+      User->>UI: Enter
+      UI->>API: PUT updated section (exec field or finding field)
+      API->>PT: update content
       PT-->>API: 200 OK
-      API-->>CLI: Success
-      CLI->>CLI: log_change for accepted or edited hunks
-    else q quit section
-      User->>CLI: Press q
-      CLI-->>API: No PUT
-      CLI-->>CLI: No logging
+      API-->>UI: success
+      UI->>CLI: log_change(accepted/edited hunks)
+    else q = quit section
+      User->>UI: q
+      UI-->>API: no PUT
+      UI-->>CLI: no logging
     end
   end
 
   User-->>CLI: Quit
-
-
 
 ```
