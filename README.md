@@ -1,68 +1,137 @@
 # Tool to assist with peer reviewing of pentest reports
 
-- NLP based suggestions for report edits
-- Thanks to Danny Nassre (nassre@gmail.com) for providing the LLM Integration
-- See the assets directory for architecture and workflow diagram
+NLP-powered CLI/TUI helper for PlexTrac reports. It fetches a report, generates LLM-based suggestions (exec summary + findings), shows readable diffs, and lets you accept/skip/edit changes **per change**, with audit logging.  Thanks to Danny Nassre (nassre@gmail.com) for supplying the LLM integration.
 
-Todo's:
-- Generate executive summary from a list of findings - In progress
-- Check if executive summary matches the report findings
-- findings generation given raw artifacts and brief descriptions (alert if a finding already exists, chose to merge, overwrite, etc..)
-- Unit tests
+# Todos
 
-# Requirements
+* Automatically generate the executive summary given a list of findings (In progress)
+* Compare the findings to the executive summary to ensure exec summary has the right wording (In progress)
+* Automatically generate findings given a directory of raw findings data
 
-- cli
-- Plextrac account with api access
-- if using llama, it expects ollama listening on 127.0.0.1:11434 - adjust as needed
-- if using grammarly server should be listening on 127.0.0.0.1:8080 for the Text generation interface (TGI) server, or you can ignore the server specification and just load the model locally without a server
-- Python version 3.10
+## Features
 
-# installation
+* **LLM suggestions**
 
-- pip install -r requirements.txt
-- python -m spacy download en_core_web_sm
+  * Findings: grammar/clarity improvements with your copy-editing pipeline (Ollama + Grammarly-style, serial).
+  * **Executive Summary Generator (`c`)**: produce structured sections from findings + template. 
+* **Readable diffs**
 
-# Usage
+  * Sentence/word diff, wrapped lines, scrollable view (`d`). 
+* **Per-change Update Mode (`u`)**
 
-- Ollama server is needed to get llama3.X:instruct text suggestions (either available via http://127.0.0.1:11434 or a remote url)
-- Grammarly model can be loaded locally without needing a running server.  It will use the hugging face pipeline to accomplish this.
+  * Review each hunk/change inside a section (exec summary first, then each finding field).
 
-<code>
-PlexTrac CLI Tool
+    * `a` accept, `s` skip, `e` edit in `$EDITOR` (vi) then accept. 
+* **Multiple views**
 
-options:
-  -h, --help            show this help message and exit
-  --server-fqdn SERVER_FQDN PlexTrac server FQDN
-  --client-name CLIENT_NAME Client name
-  --report-name REPORT_NAME Report name
-  --use-llama           Enable Llama for text processing (disabled by default)
-  --use-grammarly       Enable Grammarly for text processing (disabled by default)
-  --tgi-server-url TGI_SERVER_URL TGI Server URL for Grammarly (default: None) - TGI Server usually listens on 8080
-  --ollama-remote-url OLLAMA_REMOTE_URL Ollama server URL (default: None) - Ollama usually listens on 11434
-  --use-html-aware-editing Preserve and reinsert inline HTML tags when editing (default: disabled)
+  * `o` Original, `p` LLM suggestions, `d` Diffs, `u` Update mode. 
+* **HTML-aware editing (optional)**
 
-</code>
+  * Strip/reinsert inline tags to preserve formatting.  This has not been further developed so results may vary.
+* **Audit logging**
 
-Below is a sample run of the script
+  * Logs accepted/edited changes when updates succeed.
+* **Achitecture & workflow diagrams**
 
-1. Run the script given a client and report name.  We are using ollama running locally for LLM suggestions:
+  * See [`architecture.md`](./assets/architecture.md). 
 
-<code>peer_review_helper.py  --server-fqdn <plex server> --client-name "ACME Client" --report-name "ACME pentest" --use-llama --ollama-remote-url http://127.0.0.1:11434</code>
+## Requirements
 
-Note that once the report is loaded, a ptrac and docx copy will be stored in the directory from which the script is launched.
+* Python 3.10
+* A PlexTrac account with API access
+* (Optional) **Ollama** running locally or remote (default `127.0.0.1:11434`)
+* (Optional) **Grammarly-style** model via TGI server (default `127.0.0.1:8080`) or local HF pipeline
 
-2. Once you're authenticated, the original report from plextrac is loaded:
+## Installation
 
-   ![initial_screen](assets/first_screen.png)
+```bash
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+```
 
-At this point the report is downloaded and presented to the user in the cli menu.  The user can choose to have the llm generate suggestions:
+## Configuration
 
-3. The user presses 'r' to generate a report edited by the LLM.
+CLI flags let you choose backends:
 
-4. Once the LLM returns the edited report, 'd' can be pressed to just browse the differences the LLM suggested.  Otherwise, press 'u' to enter update mode:
+* `--use-llama` Enable Llama (Ollama local/remote)
+* `--use-grammarly` Enable Grammarly-style TGI or HF pipeline
+* `--tgi-server-url` TGI endpoint (e.g. [http://127.0.0.1:8080](http://127.0.0.1:8080))
+* `--ollama-remote-url` Ollama endpoint (e.g. [http://127.0.0.1:11434](http://127.0.0.1:11434))
+* `--use-html-aware-editing` Preserve and reinsert inline HTML tags during edits
 
-   ![updates_screen](assets/updates_view.png)
+## Usage
 
-5. In this screen, shown in the previous step, each finding change can be edited, accepted as is, or rejected.  The counters on the bottom displace this information.  To cycle thru each suggested change, The user can press n/p.  The up/down arrows can be used to scroll for content that doesn't fit on one page.
+1. **Start the CLI** (replace with your server/client/report):
 
+```bash
+python peer_review_helper.py \
+  --server-fqdn https://your.plextrac.tld \
+  --client-name "Acme Corp" \
+  --report-name "Q4 External + WebApp Pentest" \
+  --use-llama \
+  --use-grammarly
+```
+
+2. **Load report**
+   The tool authenticates and downloads the executive summary + findings.
+
+3. **(Optional) Generate exec summary (`c`)**
+
+* You’ll be prompted for test types (External/Internal/WebApp/Mobile/etc.).
+* The tool composes a structured executive summary using your template and LLMs, then stores it in the “suggested” view. 
+
+4. **(Optional) Run suggestions on findings (`r`)**
+
+* Sends findings text to the copy-editing pipeline; results appear in “LLM view”.
+
+5. **Review**
+
+* **Original view (`o`)**: report as currently stored on PlexTrac.
+* **LLM view (`p`)**: proposed text from LLMs.
+* **Diff view (`d`)**: scrollable, colorized adds/removes, wrapped lines. 
+
+6. **Update mode (`u`) – per change**
+
+* For each section (exec summary first, then each finding field):
+
+  * Navigate each **hunk** (change) and choose:
+
+    * `a`: accept this change
+    * `s`: skip (reject) this change
+    * `e`: edit in vi, then accept
+    * `n/p`: cycle thru changes without accepting/rejecting
+  * When done with a section, press **Enter** to apply updates to PlexTrac.
+  * Only accepted/edited hunks are PUT and logged. 
+
+### Keybindings (quick reference)
+
+| Key     | Mode       | Action                                                |
+| ------- | ---------- | ----------------------------------------------------- |
+| `o`     | any        | Original view (current PlexTrac text)                 |
+| `p`     | any        | LLM view (suggested text)                             |
+| `d`     | any        | Diff view (scrollable)                                |
+| `r`     | any        | Run LLM suggestions for findings                      |
+| `c`     | any        | Generate Executive Summary sections via LLMs          |
+| `shift+c`| any        | Verify exec summary matches findings                 |
+| `u`     | any        | Enter Update mode (per-change apply)                  |
+| `a`     | update     | Accept current hunk/change                            |
+| `s`     | update     | Skip current hunk/change                              |
+| `e`     | update     | Edit current hunk in vi then accept                   |
+| `n/p`   | update     | View next/previous hunk                               |
+| `v`     | update     | View the full set of changes for the current section  |
+| `f`     | update     | View just the current selected hunk                   |
+| `Enter` | update     | Apply accepted/edited changes for this section (PUT)  |
+| `q`     | any/update | Quit current view / leave update early                |
+
+## Templates
+
+Executive summary templates live in `templates/execsummary.yml`. The generator fills placeholders using the current findings + your chosen test types, then runs the LLM pipeline per section before placing text into the suggested exec-summary fields. 
+
+## Diagrams
+
+* **Architecture** and **Review workflow** diagrams are in [`architecture.md`](./assets/architecture.md).
+
+## Troubleshooting
+
+* If you don’t see diffs, ensure you’ve generated suggestions (`r` or `c`) and the visual diff has been rebuilt.
+* If `vi` opens for edit, after saving/exiting the editor, curses mode is restored automatically and the edit is applied to the current hunk/section. 
